@@ -177,14 +177,18 @@ class Program
                                 $"🔗 <a href='{invoice}'>Оплатить через @CryptoBot</a>\n\n" +
                                 "⏳ Счет действителен 30 минут\n" +
                                 "✅ После оплаты ключ придет автоматически!";
-
+                        
                         Console.WriteLine($"✅ Invoice created: {invoice}");
                         await SendMessage(chatId, message);
                     }
                     else
                     {
                         Console.WriteLine($"❌ Failed to create invoice for {chatId}");
-                        await SendMessage(chatId, "❌ Ошибка создания счета. Попробуйте позже.");
+                        await SendMessage(chatId, "❌ Ошибка создания счета. Попробуйте позже.\n\n" +
+                                "📌 Проверьте:\n" +
+                                "1. У бота @CryptoBot есть баланс\n" +
+                                "2. Токен правильный\n" +
+                                "3. Напишите /balance в @CryptoBot");
                         pendingPurchases.Remove(chatId);
                     }
                 }
@@ -259,6 +263,9 @@ class Program
     {
         try
         {
+            Console.WriteLine($"📤 Creating invoice for user {chatId}, amount: ${amount}, days: {days}");
+            Console.WriteLine($"🔑 Using token: {cryptoToken}");
+            
             var data = new FormUrlEncodedContent(new[]
             {
                 new KeyValuePair<string, string>("amount", amount.ToString("0.00")),
@@ -270,20 +277,56 @@ class Program
             });
 
             string url = $"https://api.crypt.bot/v1/createInvoice?token={cryptoToken}";
-            Console.WriteLine($"📤 Sending request to CryptoBot");
-
+            Console.WriteLine($"📤 URL: {url}");
+            
             var response = await httpClient.PostAsync(url, data);
             string json = await response.Content.ReadAsStringAsync();
 
-            Console.WriteLine($"📨 CryptoBot response: {json}");
+            Console.WriteLine($"📨 Response status: {response.StatusCode}");
+            Console.WriteLine($"📨 Response body: {json}");
 
             using var doc = JsonDocument.Parse(json);
+            
             if (doc.RootElement.TryGetProperty("ok", out var ok) && ok.GetBoolean())
             {
                 var result = doc.RootElement.GetProperty("result");
                 if (result.TryGetProperty("bot_invoice_url", out var urlProp))
                 {
-                    return urlProp.GetString();
+                    string invoiceUrl = urlProp.GetString();
+                    Console.WriteLine($"✅ Invoice created: {invoiceUrl}");
+                    return invoiceUrl;
+                }
+                else
+                {
+                    Console.WriteLine("❌ No bot_invoice_url in response");
+                }
+            }
+            else
+            {
+                if (doc.RootElement.TryGetProperty("error", out var error))
+                {
+                    string errorMsg = error.GetString();
+                    Console.WriteLine($"❌ CryptoBot error: {errorMsg}");
+                    
+                    // Отправляем пользователю понятную ошибку
+                    if (errorMsg.Contains("INSUFFICIENT_BALANCE"))
+                    {
+                        await SendMessage(chatId, "❌ У бота @CryptoBot недостаточно баланса для создания счета.\n" +
+                                "Пополните баланс в @CryptoBot");
+                    }
+                    else if (errorMsg.Contains("INVALID_TOKEN"))
+                    {
+                        await SendMessage(chatId, "❌ Ошибка токена CryptoBot.\n" +
+                                "Напишите /newtoken в @CryptoBot и обновите токен в коде");
+                    }
+                    else
+                    {
+                        await SendMessage(chatId, $"❌ Ошибка CryptoBot: {errorMsg}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"❌ Unknown error: {json}");
                 }
             }
 
@@ -291,7 +334,8 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ CryptoBot error: {ex.Message}");
+            Console.WriteLine($"❌ CryptoBot exception: {ex.Message}");
+            Console.WriteLine($"❌ Stack trace: {ex.StackTrace}");
             return null;
         }
     }
